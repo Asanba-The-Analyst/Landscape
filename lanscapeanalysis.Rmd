@@ -1,0 +1,1361 @@
+---
+title: "Maternal Immunation Safty Surveillance"
+author: "Alexander"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,message = FALSE,warning = FALSE,results = "asis")
+```
+
+
+
+```{r}
+
+# Load required libraries
+library(tidyverse)
+library(readr)
+library(openxlsx)
+library(janitor)
+library(ggplot2)
+library(plotly)
+library(gtsummary)
+library(flextable)
+
+# Set visualization theme
+theme_set(theme_minimal(base_size = 12) +
+            theme(plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+                  plot.subtitle = element_text(size = 12, hjust = 0.5),
+                  axis.title = element_text(face = "bold"),
+                  legend.title = element_text(face = "bold"),
+                  panel.grid.minor = element_blank()))
+
+# Load survey data (assuming the CSV is in a 'Data' folder)
+survey_data <- read_csv("Data/LandscapeAnalysisKHR_DATA_2025-09-17_1234.csv")
+LHIMS <- read_csv("Data/1758632774522.data.csv")
+
+
+```
+
+
+```{r}
+
+# Remove the old "LHIMS JDH" rows from data
+data_updated <- subset(survey_data, form_id != "LHIMS JDH")
+
+# Add the updated rows from new
+survey_data <- rbind(data_updated, LHIMS)
+```
+
+
+# 2.0 INTRODUCTION
+```{r}
+
+
+
+# =============================================================================
+# DATA LOADING AND PREPROCESSING
+# =============================================================================
+
+
+# Data cleaning and preprocessing
+clean_data <- survey_data %>%
+  clean_names() %>%
+  # Clean site names based on the data dictionary
+  mutate(site_name = case_when(
+    country == 1 & sname_ghana == 1 ~ "Dodowa Health Research Centre",
+    country == 1 & sname_ghana == 2 ~ "Kintampo Health Research Centre",
+    country == 2 & sname_kenya == 1 ~ "KWTRP",
+    country == 2 & sname_kenya == 2 ~ "KEMRI-LSTM",
+    TRUE ~ "Unknown Site"
+  ))
+
+# =============================================================================
+# 2.1 SITE PROFILES
+# =============================================================================
+
+# Create a data frame for site profiles
+site_profiles <- clean_data %>%
+  select(
+    site = form_id,
+    country_region_county = country,
+    site_type = datasys_g, # Using datasys_g/k to infer site type
+    facility_type = facility_type,
+    facility_level = level,
+    population_served = population,
+    catchment_size = estimate,
+    geographic_coverage = scale
+  ) %>%
+  # Recode categorical variables based on the data dictionary
+  mutate(
+    country_region_county = case_when(
+      country_region_county == 1 ~ "Ghana",
+      country_region_county == 2 ~ "Kenya",
+      TRUE ~ "Unknown"
+    ),
+    facility_type = case_when(
+      facility_type == 1 ~ "Public",
+      facility_type == 2 ~ "Private",
+      facility_type == 3 ~ "Faith-based",
+      TRUE ~ "Unknown"
+    ),
+    facility_level = case_when(
+      facility_level == 1 ~ "Level 1",
+      facility_level == 2 ~ "Level 2",
+      facility_level == 3 ~ "Level 3",
+      facility_level == 4 ~ "Level 4",
+      facility_level == 5 ~ "Level 5",
+      TRUE ~ "Unknown"
+    ),
+    population_served = case_when(
+      population_served == 1 ~ "Urban",
+      population_served == 2 ~ "Rural",
+      population_served == 3 ~ "Both Rural and Urban",
+      TRUE ~ "Unknown"
+    ),
+    geographic_coverage = case_when(
+      geographic_coverage == 1 ~ "National",
+      geographic_coverage == 2 ~ "County",
+      geographic_coverage == 3 ~ "Regional",
+      geographic_coverage == 4 ~ "Sub-County",
+      geographic_coverage == 5 ~ "District",
+      geographic_coverage == 6 ~ "Other",
+      TRUE ~ "Unknown"
+    )
+  )
+
+
+########GTSUMMARY
+# Create and format the table using gtsummary and flextable with custom labels
+site_profiles_table <- site_profiles %>%
+  select(-site) %>% # Remove site ID for a general summary
+  tbl_summary(
+    label = list(
+      country_region_county = "Country & region/county",
+      site_type = "Site type (HDSS/health facility)",
+      facility_type = "Health facility type",
+      facility_level = "Health facility level",
+      population_served = "Population served (rural, urban, both)",
+      catchment_size = "Catchment population size",
+      geographic_coverage = "Geographic coverage of system"
+    )
+  ) %>%
+  bold_labels() %>% 
+  as_flex_table()
+
+# Print the table to the console
+#site_profiles_table
+
+####### VIEW AS DATASET
+site_profiles_table2 <- flextable(site_profiles) %>%
+  set_header_labels(
+    site = "Site",
+    country_region_county = "Country & region/county",
+    site_type = "Site type",
+    facility_type = "Facility type",
+    facility_level = "Facility level",
+    population_served = "Population served",
+    catchment_size = "Catchment size",
+    geographic_coverage = "Geographic coverage"
+  ) %>%
+  autofit()
+
+site_profiles_table2
+
+
+
+```
+
+
+
+# 2.1   Data Capture Modality Heatmap
+
+```{r}
+
+
+# =============================================================================
+# 2.2 DATA SYSTEM ATTRIBUTES
+# =============================================================================
+
+
+
+### Data Capture Modality Heatmap
+# Prepare data for the heatmap
+
+# Prepare data for the heatmap
+data_capture_modality_data <- clean_data %>%
+  select(
+    site_id = form_id,
+    anc = capture_anc,
+    maternity = maternity,
+    paediatric = paediatric,
+    community = community,
+    outpatient = outp,
+    inpatient = inp,
+    paper,
+    digital
+  ) %>%
+  pivot_longer(
+    cols = anc:inpatient,
+    names_to = "service_area",
+    values_to = "capture_mode"
+  ) %>%
+  mutate(
+    service_area = case_when(
+      service_area == "anc" ~ "ANC",
+      service_area == "maternity" ~ "Maternity",
+      service_area == "paediatric" ~ "Paediatric",
+      service_area == "outpatient" ~ "Outpatient",
+      service_area == "inpatient" ~ "Inpatient",
+      service_area == "community" ~ "Community",
+      TRUE ~ service_area
+    ),
+    capture_mode = case_when(
+      capture_mode == 1 & paper == 1 & digital == 1 ~ "Hybrid",
+      capture_mode == 1 & paper == 1 ~ "Paper only",
+      capture_mode == 1 & digital == 1 ~ "Digital only",
+      TRUE ~ "Not collected"
+    )
+  )
+
+# Define custom colors as specified in the proposal
+capture_colors <- c("Paper only" = "darkblue", "Digital only" = "green", "Hybrid" = "palegoldenrod","Not collected" = "gray")
+
+# Create the heatmap for data capture modality
+ggplot(data_capture_modality_data, aes(x = factor(site_id), y = service_area, fill = capture_mode)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  scale_fill_manual(values = capture_colors) +
+  labs(
+    title = "Data Capture Modality Across Sites and Service Areas",
+    x = "Sites",
+    y = "Service Areas",
+    fill = "Category"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  coord_fixed(ratio = 1)
+```
+
+
+
+# 2.2 Core Variable Collection and Modality Heatmap
+```{r}
+
+
+### Core Variable Collection and Modality Heatmap
+# Prepare data for the core variables heatmap
+core_variable_data <- clean_data %>%
+  select(
+    site_id = form_id,
+    hiv = hiv,
+    hepb = hepb,
+    hepc = hepc,
+    syphilis = syphilis,
+    maternal_dob = sys_dob,
+    maternal_age = sys_age,
+    gestational_age = gest,
+    lmp = lmp,
+    paper,
+    digital
+    
+  ) %>%
+  pivot_longer(
+    cols = hiv:lmp,
+    names_to = "core_variable",
+    values_to = "collection_mode"
+  ) %>%
+  mutate(
+    core_variable = case_when(
+      core_variable == "hiv" ~ "HIV",
+      core_variable == "hepb" ~ "Hepatitis B",
+      core_variable == "hepc" ~ "Hepatitis C",
+      core_variable == "syphilis" ~ "Syphilis",
+      core_variable == "maternal_dob" ~ "Maternal DOB",
+      core_variable == "maternal_age" ~ "Maternal age",
+      core_variable == "gestational_age" ~ "Gestational age",
+      core_variable == "lmp" ~ "LMP",
+      TRUE ~ core_variable
+    ),
+    collection_mode = case_when(
+      collection_mode == 1 & paper == 1 & digital == 1 ~ "Hybrid",
+      collection_mode == 1 & paper == 1 ~ "Paper only",
+      collection_mode == 1 & digital == 1 ~ "Digital only",
+      TRUE ~ "Not collected"
+    )
+  )
+
+# Define custom colors as specified in the proposal
+variable_colors <- c("Hybrid"="red","Paper only" = "pink", "Digital only" = "lightskyblue", "Not collected" = "gray")
+
+# Create the heatmap for core variable collection
+ggplot(core_variable_data, aes(x = factor(site_id), y = core_variable, fill = collection_mode)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  scale_fill_manual(values = variable_colors) +
+  labs(
+    title = "Core Variable Collection and Modality Across Sites",
+    x = "Sites",
+    y = "Core Variables",
+    fill = "Data Collection Method"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  coord_fixed(ratio = 1)
+
+```
+
+
+
+# Figure shell 3: Data standardization practices and coding languages used
+
+```{r}
+
+#Prepare data for the heatmap
+data_capture_modality_data <- clean_data %>%
+  select(
+    site_id = form_id,
+    anc = capture_anc,
+    maternity = maternity,
+    paediatric = paediatric,
+    community = community,
+    outpatient = outp,
+    inpatient = inp,icd10 = icd10,
+    icd11 = icd11,
+    meddra = meddra,
+    who_drug = who_drug,
+    rxnorm = rxnorm,
+    atc = atc
+    #nat_formulary = nat_formulary,
+    #standform = standform,
+    #freetext = freetext
+  ) %>%
+  pivot_longer(
+    cols = anc:inpatient,
+    names_to = "service_area",
+    values_to = "coding_system"
+  ) %>%
+  mutate(
+    service_area = case_when(
+      service_area == "anc" ~ "ANC",
+      service_area == "maternity" ~ "Maternity",
+      service_area == "paediatric" ~ "Paediatric",
+      service_area == "outpatient" ~ "Outpatient",
+      service_area == "inpatient" ~ "Inpatient",
+      service_area == "community" ~ "Community",
+      TRUE ~ service_area
+    ),
+  coding_system = case_when(
+  coding_system == 1 & icd10 == 1 ~ "ICD-10",
+  coding_system == 1 & icd11 == 1 ~ "ICD-11",
+  coding_system == 1 & meddra == 1 ~ "MedDRA",
+  #coding_system == 1 & atc == 1 ~ "MedDRA",
+  coding_system == 1 & who_drug == 1 ~ "WHO DRUG",
+  coding_system == 1 & rxnorm == 1 ~ "RxNorm",
+  #coding_system == 1 & other_standz == 1 ~ "Other",
+  #coding_system == 1 & nat_formulary == 1 ~ "Other",
+  coding_system == 1 & atc == 1 ~ "Other",
+  TRUE ~ "None"
+)
+  )
+
+# Define custom colors as specified in the proposal
+capture_colors <- c(
+  "None" = "lightblue",
+  "ICD-10" = "grey",
+  "ICD-11" = "lightgreen",
+  "MedDRA" = "yellow",
+  "WHO DRUG" = "red",
+  "RxNorm" = "purple",
+  "Other" = "orange"
+)
+
+# Create the heatmap for data capture modality
+ggplot(data_capture_modality_data, aes(x = factor(site_id), y = service_area, fill = coding_system)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  scale_fill_manual(values = capture_colors) +
+  labs(
+    title = "Data Capture Modality Across Sites and Service Areas",
+    x = "Sites",
+    y = "Service Areas",
+    fill = "Category"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  coord_fixed(ratio = 1)
+```
+
+
+
+# FIGURE SHELL 4: NEWBORN FOLLOW UP BAR CHART
+
+```{r results='asis'}
+
+
+
+clean_data <- survey_data %>%
+  clean_names() %>%
+  # Create a clearer site name column based on the country and site code
+  mutate(site_name = case_when(
+    country == 1 & sname_ghana == 1 ~ "Dodowa Health Research Centre",
+    country == 1 & sname_ghana == 2 ~ "Kintampo Health Research Centre",
+    country == 2 & sname_kenya == 1 ~ "KWTRP",
+    country == 2 & sname_kenya == 2 ~ "KEMRI-LSTM",
+    TRUE ~ as.character(form_id)
+  ))
+
+# =============================================================================
+# FIGURE SHELL 4: NEWBORN FOLLOW UP BAR CHART
+# =============================================================================
+
+# Prepare data for the bar chart
+newborn_follow_up_data <- clean_data %>%
+  # Select the relevant columns
+  select(
+    site_id = form_id,
+    site_name,
+    newborns1,
+    newborns2,
+    newborns3,
+    newborns4,
+    newborns5,
+    newborns6,
+    newborn7
+  ) %>%
+  # Convert wide data to long format for plotting
+  pivot_longer(
+    cols = newborns1:newborn7,
+    names_to = "follow_up_variable",
+    values_to = "status_code"
+  ) %>%
+  # Filter for records where the follow-up period is used (status_code == 1)
+  filter(status_code == 1) %>%
+  # Map the variable names to a more descriptive follow-up period
+  mutate(
+    follow_up_period = case_when(
+      follow_up_variable == "newborns1" ~ "6 mnths",
+      follow_up_variable == "newborns2" ~ "Not collected",
+      follow_up_variable == "newborns3" ~ "6 mnths regular",
+      follow_up_variable == "newborns4" ~ "3 months",
+      follow_up_variable == "newborns5" ~ "12 months",
+      follow_up_variable == "newborns6" ~ "24 months",
+      follow_up_variable == "newborn7" ~ "Other",
+      TRUE ~ "Unknown"
+    )
+  )
+
+# Create the grouped bar graph with sites on the x-axis
+ggplot(newborn_follow_up_data, aes(x = site_id, fill = follow_up_period)) +
+  geom_bar() +
+  labs(
+    title = "Distribution of Newborn Follow-Up Periods by Site",
+    x = "Site",
+    y = "Number of Follow-up Periods Used",
+    fill = "Follow-Up Period"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    panel.grid.major.x = element_blank(),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+
+
+```
+
+# FIGURE SHELL: MEDICAL DIAGNOSTICS HEATMAP
+```{r results='asis'}
+
+# =============================================================================
+# FIGURE SHELL: MEDICAL DIAGNOSTICS HEATMAP
+# =============================================================================
+
+# Prepare data for the diagnostics capacity heatmap
+diagnostics_data <- clean_data %>%
+  # Select the site name and all relevant diagnostics variables
+  select(
+    site_id = form_id,
+    mri,
+    ct,
+    bchem,
+    hem,
+    urin,
+    xray
+  ) %>%
+  # Convert wide data to long format for ggplot2
+  pivot_longer(
+    cols = mri:xray,
+    names_to = "diagnostic_variable",
+    values_to = "status_code"
+  ) %>%
+  # Filter out missing values
+  filter(!is.na(status_code)) %>%
+  mutate(
+    # Mapping codes to clear labels based on the data
+    status = case_when(
+      status_code == 1 ~ "Yes",
+      status_code == 2 ~ "No",
+      status_code == 9 ~ "Not Applicable",
+      .default = NA_character_
+    ),
+    # Map variable names to descriptive labels for the plot
+    diagnostic_label = case_when(
+      diagnostic_variable == "mri" ~ "MRI Scan",
+      diagnostic_variable == "ct" ~ "CT Scan",
+      diagnostic_variable == "bchem" ~ "Blood Chemistry",
+      diagnostic_variable == "hem" ~ "Hematology",
+      diagnostic_variable == "urin" ~ "Urinalysis",
+      diagnostic_variable == "xray" ~ "X-ray",
+      TRUE ~ "Unknown"
+    )
+  )# %>%
+  # Filter out "Not Applicable" responses to avoid cluttering the plot
+  #filter(status != "Not Applicable")
+
+# Define a color palette for the statuses
+diagnostics_colors <- c(
+  "Yes" = "darkgreen",
+  "No" = "lightcoral",
+  "Not Applicable" = "gray"
+)
+
+# Create the heatmap
+ggplot(diagnostics_data, aes(x = site_id, y = diagnostic_label, fill = status)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  scale_fill_manual(values = diagnostics_colors) +
+  labs(
+    title = "Medical Diagnostics Capacity by Site",
+    x = "Site",
+    y = "Medical Diagnostic Service",
+    fill = "status?"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid = element_blank(),
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+
+# You can save the plot to a file using the following command:
+# ggsave("medical_diagnostics_heatmap.png", width = 10, height = 6, units = "in")
+```
+
+
+
+```{r}
+# Figure shell 4: Distribution of newborn follow up periods by site 
+
+# =============================================================================
+# FIGURE SHELL 4: DISTRIBUTION OF NEWBORN FOLLOW-UP PERIODS BY SITE
+# =============================================================================
+# 
+# # Prepare data for the newborn follow-up periods
+# newborn_followup_data <- clean_data %>%
+#   # Select the site name and all relevant newborn follow-up variables
+#   select(
+#     site_id = form_id,
+#     site_name,
+#     newborns1,  # Routine follow-up of newborns for 6 months postpartum
+#     newborns2,  # Newborn's individual information not routinely collected after delivery
+#     newborns3,  # Routine follow-up of newborns for 6 months postpartum (every 6 months)
+#     newborns4,  # Routine follow-up newborns for 3 months postpartum (every 3 months)
+#     newborns5,  # Routine follow-up of newborns for 12 months postpartum
+#     newborns6,  # Routine follow-up up to 24 months for neurodevelopment assessments
+#     newborn7    # Other
+#   ) %>%
+#   # Convert wide data to long format for ggplot2
+#   pivot_longer(
+#     cols = newborns1:newborn7,
+#     names_to = "followup_type",
+#     values_to = "status_code"
+#   ) %>%
+#   # Filter out missing values and create a new status column
+#   filter(!is.na(status_code)) %>%
+#   mutate(
+#     # Filter for only "Yes" responses (status_code == 1)
+#     status = ifelse(status_code == 1, "Yes", "No")
+#   ) %>%
+#   # Keep only "Yes" responses for the chart
+#   filter(status == "Yes") %>%
+#   # Map variable names to descriptive labels for the plot
+#   mutate(
+#     followup_label = case_when(
+#       followup_type == "newborns1" ~ "6 months postpartum",
+#       followup_type == "newborns2" ~ "Not routinely collected",
+#       followup_type == "newborns3" ~ "6 months (regular 6-month rounds)",
+#       followup_type == "newborns4" ~ "3 months (regular 3-month rounds)",
+#       followup_type == "newborns5" ~ "12 months postpartum",
+#       followup_type == "newborns6" ~ "Up to 24 months (neurodevelopment)",
+#       followup_type == "newborn7" ~ "Other",
+#       TRUE ~ "Unknown"
+#     )
+#   )
+# 
+# # Count the number of sites using each follow-up period
+# followup_counts <- newborn_followup_data %>%
+#   count(followup_label) %>%
+#   arrange(desc(n))
+# 
+# # Reorder the factor levels based on frequency
+# newborn_followup_data$followup_label <- factor(
+#   newborn_followup_data$followup_label,
+#   levels = followup_counts$followup_label
+# )
+# 
+# # Create the bar chart using ggplot2
+# ggplot(newborn_followup_data, aes(x = site_id, fill = followup_label)) +
+#   geom_bar(position = "dodge", color = "white", alpha = 0.8) +
+#   scale_fill_viridis_d(option = "plasma", name = "Site") +
+#   labs(
+#     title = "Distribution of Newborn Follow-up Periods by Site",
+#     subtitle = "Duration and frequency of newborn follow-up practices across sites",
+#     x = "Follow-up Period",
+#     y = "Number of Sites",
+#     caption = "Source: Landscape Analysis of Maternal Immunization Safety Surveillance Systems"
+#   ) +
+#   theme_minimal(base_size = 12) +
+#   theme(
+#     axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+#     axis.text.y = element_text(size = 10),
+#     panel.grid.major.x = element_blank(),
+#     plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+#     plot.subtitle = element_text(hjust = 0.5, size = 12, margin = margin(b = 15)),
+#     legend.position = "right",
+#     plot.caption = element_text(hjust = 1, size = 9, margin = margin(t = 10))
+#   ) +
+#   guides(fill = guide_legend(ncol = 1))
+```
+
+
+```{r}
+# =============================================================================
+# FIGURE SHELL 4: DISTRIBUTION OF NEWBORN FOLLOW-UP PERIODS BY SITE
+# =============================================================================
+
+# Prepare data for the newborn follow-up periods
+# newborn_followup_data <- clean_data %>%
+#   # Select the site name and all relevant newborn follow-up variables
+#   select(
+#     site_id = form_id,    # Assuming you have a site_id variable
+#     site_name,   # Site name for labeling
+#     newborns1,   # Routine follow-up of newborns for 6 months postpartum
+#     newborns2,   # Newborn's individual information not routinely collected after delivery
+#     newborns3,   # Routine follow-up of newborns for 6 months postpartum (every 6 months)
+#     newborns4,   # Routine follow-up newborns for 3 months postpartum (every 3 months)
+#     newborns5,   # Routine follow-up of newborns for 12 months postpartum
+#     newborns6,   # Routine follow-up up to 24 months for neurodevelopment assessments
+#     newborn7     # Other
+#   ) %>%
+#   # Convert wide data to long format for ggplot2
+#   pivot_longer(
+#     cols = newborns1:newborn7,
+#     names_to = "followup_type",
+#     values_to = "status_code"
+#   ) %>%
+#   # Filter out missing values and create a new status column
+#   filter(!is.na(status_code)) %>%
+#   mutate(
+#     # Filter for only "Yes" responses (status_code == 1)
+#     status = ifelse(status_code == 1, "Yes", "No")
+#   ) %>%
+#   # Keep only "Yes" responses for the chart
+#   filter(status == "Yes") %>%
+#   # Map variable names to descriptive labels for the plot
+#   mutate(
+#     followup_label = case_when(
+#       followup_type == "newborns1" ~ "6 months postpartum",
+#       followup_type == "newborns2" ~ "Not routinely collected",
+#       followup_type == "newborns3" ~ "6 months (regular 6-month rounds)",
+#       followup_type == "newborns4" ~ "3 months (regular 3-month rounds)",
+#       followup_type == "newborns5" ~ "12 months postpartum",
+#       followup_type == "newborns6" ~ "Up to 24 months (neurodevelopment)",
+#       followup_type == "newborn7" ~ "Other",
+#       TRUE ~ "Unknown"
+#     )
+#   )
+# 
+# # Create the bar chart using ggplot2
+# ggplot(newborn_followup_data, aes(x = site_id, fill = followup_label)) +
+#   geom_bar(position = "dodge", color = "white", alpha = 0.8) +
+#   scale_fill_viridis_d(option = "plasma", name = "Follow-up Period") +
+#   labs(
+#     title = "Distribution of Newborn Follow-up Periods by Site",
+#     subtitle = "Duration and frequency of newborn follow-up practices across sites",
+#     x = "Site",
+#     y = "Count",
+#     caption = "Source: Landscape Analysis of Maternal Immunization Safety Surveillance Systems"
+#   ) +
+#   theme_minimal(base_size = 12) +
+#   theme(
+#     axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+#     axis.text.y = element_text(size = 10),
+#     panel.grid.major.x = element_blank(),
+#     plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+#     plot.subtitle = element_text(hjust = 0.5, size = 12, margin = margin(b = 15)),
+#     legend.position = "right",
+#     plot.caption = element_text(hjust = 1, size = 9, margin = margin(t = 10))
+#   ) +
+#   guides(fill = guide_legend(ncol = 1))
+
+
+```
+
+
+
+
+```{r}
+# 2.3 DATA QUALITY & SHARING PRACTICES
+
+# =============================================================================
+# 2.3 DATA QUALITY & SHARING PRACTICES
+# =============================================================================
+
+# # Create a data frame for data quality and sharing practices
+# data_quality_sharing <- clean_data %>%
+#   select(
+#     site = form_id,
+#     trained_in_data_quality = trained,
+#     data_quality_check_methods = checarr,
+#     data_quality_check_frequency = dataq_freq,
+#     mnch_indicator_review = mnch,
+#     data_refresh_frequency = data_refresh,
+#     data_sharing = dsharing,
+#     data_transmission = dtransfer
+#   ) %>%
+#   # Recode categorical variables based on the data dictionary
+#   mutate(
+#     trained_in_data_quality = case_when(
+#       trained_in_data_quality == 1 ~ "Yes",
+#       trained_in_data_quality == 2 ~ "No",
+#       TRUE ~ "Unknown"
+#     ),
+#     data_quality_check_methods = case_when(
+#       data_quality_check_methods == 1 ~ "Manual Check",
+#       data_quality_check_methods == 2 ~ "System Automation",
+#       TRUE ~ "Unknown"
+#     ),
+#     data_quality_check_frequency = case_when(
+#       data_quality_check_frequency == 1 ~ "Daily",
+#       data_quality_check_frequency == 2 ~ "Weekly",
+#       data_quality_check_frequency == 3 ~ "Monthly",
+#       data_quality_check_frequency == 4 ~ "Quarterly",
+#       data_quality_check_frequency == 5 ~ "Annually",
+#       data_quality_check_frequency == 6 ~ "Other",
+#       TRUE ~ "Unknown"
+#     ),
+#     mnch_indicator_review = case_when(
+#       mnch_indicator_review == 1 ~ "Yes",
+#       mnch_indicator_review == 2 ~ "No",
+#       TRUE ~ "Unknown"
+#     ),
+#     data_refresh_frequency = case_when(
+#       data_refresh_frequency == 1 ~ "Daily",
+#       data_refresh_frequency == 2 ~ "Weekly",
+#       data_refresh_frequency == 3 ~ "Monthly",
+#       data_refresh_frequency == 4 ~ "Quarterly",
+#       data_refresh_frequency == 5 ~ "Annually",
+#       data_refresh_frequency == 6 ~ "Other",
+#       TRUE ~ "Unknown"
+#     ),
+#     data_sharing = case_when(
+#       data_sharing == 1 ~ "Yes",
+#       data_sharing == 2 ~ "No",
+#       TRUE ~ "Unknown"
+#     ),
+#     data_transmission = case_when(
+#       data_transmission == 1 ~ "Manual",
+#       data_transmission == 2 ~ "Automated",
+#       TRUE ~ "Unknown"
+#     )
+#   )
+# 
+# # Create and format the table using gtsummary and flextable
+# data_quality_sharing_table <- data_quality_sharing %>%
+#   #select(-site) %>% # Remove site ID for a general summary
+#   tbl_summary(by=site) %>%
+#   as_flex_table()
+# 
+# # Print the table to the console
+# data_quality_sharing_table
+
+```
+
+# 2.4 DATA STORAGE SYSTEMS AND PRACTICES
+
+```{r}
+
+
+# =============================================================================
+# 2.4 DATA STORAGE SYSTEMS AND PRACTICES
+# =============================================================================
+
+# Create a data frame for data storage systems and practices
+data_storage_practices <- clean_data %>%
+  select( #location=site_name,
+    site = form_id,
+    system_type = system,
+    data_storage_type = storge,
+    data_storage_location = local, # 'local' and 'cloud' are separate columns
+    data_integration_type = spysysint1,
+    network_architecture = network,
+    security_measures = dsecurity,
+    backup_recovery = backup_freq
+  ) %>%
+  # Recode categorical variables based on the data dictionary
+  mutate(
+    system_type = case_when(
+      system_type == 1 ~ "Proprietary",
+      system_type == 2 ~ "Open Source",
+      system_type == 3 ~ "In-House",
+      TRUE ~ "Unknown"
+    ),
+    data_storage_type = case_when(
+      data_storage_type == 1 ~ "SQL",
+      data_storage_type == 2 ~ "NoSQL",
+      data_storage_type == 3 ~ "Flat File",
+      data_storage_type == 4 ~ "Other",
+      TRUE ~ "Unknown"
+    ),
+    data_storage_location = case_when(
+      data_storage_location == 1 ~ "Local",
+      data_storage_location == 2 ~ "Cloud",
+      TRUE ~ "Unknown"
+    ),
+    data_integration_type = case_when(
+      data_integration_type == 1 ~ "Yes",
+      data_integration_type == 2 ~ "No",
+      TRUE ~ "Unknown"
+    ),
+    network_architecture = case_when(
+      network_architecture == 1 ~ "Standalone",
+      network_architecture == 2 ~ "Local Client-Server",
+      network_architecture == 3 ~ "Cloud",
+      TRUE ~ "Unknown"
+    ),
+    security_measures = case_when(
+      security_measures == 1 ~ "Password Protection",
+      security_measures == 2 ~ "Encryption",
+      security_measures == 3 ~ "Access Control",
+      security_measures == 4 ~ "Physical Security",
+      security_measures == 5 ~ "Other",
+      TRUE ~ "Unknown"
+    ),
+    backup_recovery = case_when(
+      backup_recovery == 1 ~ "Daily",
+      backup_recovery == 2 ~ "Weekly",
+      backup_recovery == 3 ~ "Monthly",
+      backup_recovery == 4 ~ "Quarterly",
+      backup_recovery == 5 ~ "Annually",
+      backup_recovery == 6 ~ "Other",
+      TRUE ~ "Unknown"
+    )
+  )
+
+# Create and format the table using gtsummary and flextable
+data_storage_practices_table <- data_storage_practices %>%
+  #select(-site) %>% # Remove site ID for a general summary
+  tbl_summary(by=site) %>%
+  as_flex_table()
+
+# Print the table to the console
+#data_storage_practices_table
+
+# =============================================================================
+# 3 SWOT ANALYSIS AND RECOMMENDATIONS
+# =============================================================================
+
+
+
+```
+
+
+```{r}
+# 2.4.1 Data governance profiles 
+# =============================================================================
+# TABLE SHELL 2: SITE DATA GOVERNANCE PROFILES
+# =============================================================================
+
+# Prepare data for the data governance profiles table
+governance_data <- clean_data %>%
+  # Select the relevant variables for data governance
+  select(
+    site = form_id,
+    data_reg,           # Compliance with data protection regulations
+    trained,            # Staff trained in IT and data protection
+    protocol,           # Data sharing protocol
+    consented,          # Consent for data collection
+    dreuse,             # Consent for data reuse
+    dtransfer,          # Consent for data transfer
+    backup              # Backup and recovery policies
+  ) %>%
+  # Convert coded values to meaningful labels
+  mutate(
+    # Compliance with data protection regulations
+    compliance = case_when(
+      data_reg == 1 ~ "Yes",
+      data_reg == 2 ~ "No",
+      TRUE ~ "Not Specified"
+    ),
+    # Staff trained in IT and data protection
+    staff_trained = case_when(
+      trained == 1 ~ "Yes",
+      trained == 2 ~ "No",
+      TRUE ~ "Not Specified"
+    ),
+    # Data sharing protocol
+    sharing_protocol = case_when(
+      protocol == 1 ~ "Yes",
+      protocol == 2 ~ "No",
+      TRUE ~ "Not Specified"
+    ),
+    # Consent practices
+    consent_practices = case_when(
+      consented == 1 ~ "Data collection",
+      consented == 2 ~ "No consent",
+      TRUE ~ "Not Specified"
+    ),
+    # Add details about consent types if available
+    consent_details = case_when(
+      consented == 1 & dreuse == 1 & dtransfer == 1 ~ "Collection, Reuse, Transfer",
+      consented == 1 & dreuse == 1 ~ "Collection, Reuse",
+      consented == 1 & dtransfer == 1 ~ "Collection, Transfer",
+      consented == 1 ~ "Collection only",
+      consented == 2 ~ "No consent",
+      TRUE ~ "Not Specified"
+    ),
+    # Backup and recovery policies
+    backup_policies = case_when(
+      backup == 1 ~ "Yes",
+      backup == 2 ~ "No",
+      TRUE ~ "Not Specified"
+    )
+  ) %>%
+  # Select only the formatted columns for the table
+  select(
+    site,
+    compliance,
+    staff_trained,
+    sharing_protocol,
+    consent_details,
+    backup_policies
+  )
+
+# Create a formatted table using kableExtra
+governance_table <- governance_data %>%
+  rename(
+    "Site" = site,
+    "Compliance with Data Protection Regulations" = compliance,
+    "Trained Staff in IT and Data Protection" = staff_trained,
+    "Data Sharing Protocol" = sharing_protocol,
+    "Consent Practices" = consent_details,
+    "Backup and Recovery Policies" = backup_policies
+  ) %>%
+  knitr::kable(
+    format = "html",
+    caption = "Table 2: Site Data Governance Profiles",
+    align = c("l", "c", "c", "c", "c", "c")
+  ) %>%
+  kableExtra::kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    position = "center"
+  ) %>%
+  kableExtra::row_spec(0, bold = TRUE, color = "white", background = "#2E8B57") %>%
+  kableExtra::column_spec(1, bold = TRUE) %>%
+  kableExtra::footnote(
+    general = "Source: Landscape Analysis of Maternal Immunization Safety Surveillance Systems",
+    general_title = "Note: "
+  )
+
+# Display the table
+governance_table
+```
+
+
+# TABLE SHELL 3: DATA CAPTURE PRACTICES
+
+```{r}
+# =============================================================================
+# TABLE SHELL 3: DATA CAPTURE PRACTICES
+# =============================================================================
+
+# Prepare data for the data capture practices table
+capture_practices_data <- clean_data %>%
+  # Select the relevant variables for data capture practices
+  select(
+    site = form_id,,
+    paper,              # Paper-based data capture
+    digital,            # Digital data capture
+    mobile_phone,       # Mobile phone device
+    laptop,             # Laptop device
+    tablet,             # Tablet device
+    paper_capture,      # Paper capture device
+    mode_entry,         # Mode of data entry (online/offline)
+    ids,                # How patient IDs are assigned
+    standard_acr,       # Standard patient ID across departments
+    idcapture,          # National ID captured
+    dob,                # Names and DOB captured
+    link_uni,           # Mother-child ID linkage
+    pid,                # Patient ID usable across hospitals
+    link_pid,           # Link patient to other services
+    mnch_data,          # MNCH data systems integration
+    mnhcdasys           # MNCH integration with community systems
+  ) %>%
+  # Convert coded values to meaningful labels
+  mutate(
+    # Data capture modality
+    capture_modality = case_when(
+      paper == 1 & digital == 1 ~ "Hybrid (Paper & Digital)",
+      paper == 1 ~ "Paper Only",
+      digital == 1 ~ "Digital Only",
+      TRUE ~ "Not Specified"
+    ),
+    
+    # Data capture devices
+    capture_devices = case_when(
+      mobile_phone == 1 & laptop == 1 & tablet == 1 & paper_capture == 1 ~ "Mobile, Laptop, Tablet, Paper",
+      mobile_phone == 1 & laptop == 1 & tablet == 1 ~ "Mobile, Laptop, Tablet",
+      mobile_phone == 1 & laptop == 1 ~ "Mobile, Laptop",
+      mobile_phone == 1 & tablet == 1 ~ "Mobile, Tablet",
+      laptop == 1 & tablet == 1 ~ "Laptop, Tablet",
+      mobile_phone == 1 ~ "Mobile Phone",
+      laptop == 1 ~ "Laptop",
+      tablet == 1 ~ "Tablet",
+      paper_capture == 1 ~ "Paper",
+      TRUE ~ "Not Specified"
+    ),
+    
+    # Data entry mode
+    entry_mode = case_when(
+      mode_entry == 1 ~ "Online",
+      mode_entry == 2 ~ "Offline",
+      mode_entry == 3 ~ "Both Online & Offline",
+      TRUE ~ "Not Specified"
+    ),
+    
+    # Patient ID generation
+    patient_id_generation = case_when(
+      ids == 1 ~ "Manual",
+      ids == 2 ~ "System Generated",
+      ids == 3 ~ "Both Manual & System",
+      TRUE ~ "Not Specified"
+    ),
+    
+    # Standard unique patient identifier across services
+    standard_patient_id = case_when(
+      standard_acr == 1 ~ "Yes",
+      standard_acr == 2 ~ "No",
+      TRUE ~ "Not Specified"
+    ),
+    
+    # Standard unique patient identifier across visits
+    standard_visit_id = case_when(
+      dob == 1 ~ "Yes (Names & DOB captured)",
+      dob == 2 ~ "No",
+      TRUE ~ "Not Specified"
+    ),
+    
+    # Mother-child data linkage
+    mother_child_linkage = case_when(
+      link_uni == 1 ~ "Yes",
+      link_uni == 2 ~ "No",
+      TRUE ~ "Not Specified"
+    ),
+    
+    # Cross-pregnancy data linkage
+    cross_pregnancy_linkage = case_when(
+      pid == 1 ~ "Yes (ID usable across hospitals)",
+      pid == 2 ~ "No",
+      TRUE ~ "Not Specified"
+    ),
+    
+    # MNCH linkage with registries
+    mnch_registry_linkage = case_when(
+      mnch_data == 1 ~ "Yes",
+      mnch_data == 2 ~ "No",
+      TRUE ~ "Not Specified"
+    ),
+    
+    # MNCH integration with other data systems
+    mnch_integration = case_when(
+      mnhcdasys == 1 ~ "Yes",
+      mnhcdasys == 2 ~ "No",
+      TRUE ~ "Not Specified"
+    )
+  ) %>%
+  # Select only the formatted columns for the table
+  select(
+    site,
+    capture_modality,
+    capture_devices,
+    entry_mode,
+    patient_id_generation,
+    standard_patient_id,
+    standard_visit_id,
+    mother_child_linkage,
+    cross_pregnancy_linkage,
+    mnch_registry_linkage,
+    mnch_integration
+  )
+
+# Create a formatted table using kableExtra
+capture_practices_table <- capture_practices_data %>%
+  rename(
+    "Site" = site,
+    "Data Capture Modality" = capture_modality,
+    "Data Capture Devices" = capture_devices,
+    "Data Entry Mode" = entry_mode,
+    "Patient ID Generation" = patient_id_generation,
+    "Standard ID Across Services" = standard_patient_id,
+    "Standard ID Across Visits" = standard_visit_id,
+    "Mother-Child Linkage" = mother_child_linkage,
+    "Cross-Pregnancy Linkage" = cross_pregnancy_linkage,
+    "MNCH Registry Linkage" = mnch_registry_linkage,
+    "MNCH System Integration" = mnch_integration
+  ) %>%
+  knitr::kable(
+    format = "html",
+    caption = "Table 3: Data Capture Practices",
+    align = c("l", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c")
+  ) %>%
+  kableExtra::kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = TRUE,
+    position = "center",
+    font_size = 10
+  ) %>%
+  kableExtra::row_spec(0, bold = TRUE, color = "white", background = "#2E8B57") %>%
+  kableExtra::column_spec(1, bold = TRUE, width = "10em") %>%
+  kableExtra::column_spec(2:11, width = "8em") %>%
+  kableExtra::scroll_box(width = "100%", height = "500px") %>%
+  kableExtra::footnote(
+    general = "Source: Landscape Analysis of Maternal Immunization Safety Surveillance Systems",
+    general_title = "Note: "
+  )
+
+# Display the table
+capture_practices_table
+
+```
+
+
+
+
+# Table Shell 4: Data Quality and Sharing Practices
+```{r}
+# =============================================================================
+# TABLE SHELL 4: DATA QUALITY AND SHARING PRACTICES
+# =============================================================================
+
+# Prepare data for the data quality and sharing practices table
+quality_sharing_data <- clean_data %>%
+  # Select the relevant variables for data quality and sharing practices
+  select(
+    site = form_id,,
+    checarr,           # Routine data quality checks
+    dataq_freq,        # Frequency of data quality checks
+    dqa_review,        # Data quality review process
+    dqa_issues,        # How data quality issues are addressed
+    mnch,              # Frequency of MNCH indicators review
+    pre,               # Pre-programmed validation checks
+    data,              # Data quality checks from extracted data
+    visual,            # Visual verification
+    assurance,         # Staff trained on data quality assurance
+    data_refresh,      # Data refresh frequency
+    dsharing,          # Data sharing status
+    hospd,             # Data shared with hospital departments
+    coun,              # Data shared with county
+    car,               # Data shared with other hospitals for patient care
+    rescom,            # Data shared with research community
+    dist,              # Data shared with district health management teams
+    minishea,          # Data shared with Ministry of Health
+    other_shared,      # Data shared with other entities
+    sharefreq_1,       # Data shared on request
+    sharefreq_2,       # Data shared routinely
+    hadrive,           # Data shared via hard drive
+    intesys,           # Data shared via integrated systems
+    via,               # Data shared via email
+    whatsapp,          # Data shared via WhatsApp
+    text,              # Data shared via text
+    online,            # Data shared via online drive
+    other_shared_meth  # Other data sharing methods
+  ) %>%
+  # Convert coded values to meaningful labels
+  mutate(
+    # Routine data quality checks
+    routine_quality_checks = case_when(
+      checarr == 1 ~ "Yes",
+      checarr == 2 ~ "No",
+      TRUE ~ "Not Specified"
+    ),
+    
+    # Frequency of data quality checks
+    quality_check_frequency = case_when(
+      dataq_freq == 1 ~ "Weekly",
+      dataq_freq == 2 ~ "Monthly",
+      dataq_freq == 3 ~ "Bi-annual",
+      dataq_freq == 4 ~ "Other",
+      TRUE ~ "Not Specified"
+    ),
+    
+    # Data quality review process (simplified from notes)
+    quality_review_process = case_when(
+      !is.na(dqa_review) & nchar(dqa_review) > 0 ~ "Documented",
+      checarr == 1 ~ "Yes (Not Documented)",
+      TRUE ~ "Not Specified"
+    ),
+    
+    # Data quality issue resolution (simplified from notes)
+    quality_issue_resolution = case_when(
+      !is.na(dqa_issues) & nchar(dqa_issues) > 0 ~ "Documented",
+      checarr == 1 ~ "Yes (Not Documented)",
+      TRUE ~ "Not Specified"
+    ),
+    
+    # Frequency of MNCH indicators review
+    mnch_review_frequency = case_when(
+      mnch == 1 ~ "Monthly",
+      mnch == 2 ~ "Weekly",
+      mnch == 3 ~ "Routinely",
+      mnch == 4 ~ "Never",
+      mnch == 5 ~ "Other",
+      TRUE ~ "Not Specified"
+    ),
+    
+    # Quality check methods
+    quality_check_methods = case_when(
+      pre == 1 & data == 1 & visual == 1 ~ "Pre-programmed, Extracted Data, Visual",
+      pre == 1 & data == 1 ~ "Pre-programmed, Extracted Data",
+      pre == 1 & visual == 1 ~ "Pre-programmed, Visual",
+      data == 1 & visual == 1 ~ "Extracted Data, Visual",
+      pre == 1 ~ "Pre-programmed",
+      data == 1 ~ "Extracted Data",
+      visual == 1 ~ "Visual",
+      TRUE ~ "Not Specified"
+    ),
+    
+    # Staff trained on data quality assurance
+    staff_trained_quality = case_when(
+      assurance == 1 ~ "Yes",
+      assurance == 2 ~ "No",
+      TRUE ~ "Not Specified"
+    ),
+    
+    # Data refresh frequency
+    data_refresh_frequency = case_when(
+      data_refresh == 1 ~ "Real-time",
+      data_refresh == 2 ~ "Daily",
+      data_refresh == 3 ~ "Weekly",
+      data_refresh == 4 ~ "Monthly",
+      data_refresh == 5 ~ "Quarterly",
+      data_refresh == 6 ~ "Annually",
+      TRUE ~ "Not Specified"
+    ),
+    
+    # Data sharing status
+    data_sharing_status = case_when(
+      dsharing == 1 ~ "Yes",
+      dsharing == 2 ~ "No",
+      TRUE ~ "Not Specified"
+    ),
+    
+    # Data sharing recipients
+    data_sharing_recipients = case_when(
+      hospd == 1 & coun == 1 & car == 1 & rescom == 1 & dist == 1 & minishea == 1 ~ "All Entities",
+      hospd == 1 & coun == 1 & minishea == 1 ~ "Hospital, County, Ministry",
+      hospd == 1 & coun == 1 ~ "Hospital, County",
+      hospd == 1 ~ "Hospital Departments",
+      coun == 1 ~ "County",
+      car == 1 ~ "Other Hospitals",
+      rescom == 1 ~ "Research Community",
+      dist == 1 ~ "District Health",
+      minishea == 1 ~ "Ministry of Health",
+      other_shared == 1 ~ "Other Entities",
+      TRUE ~ "Not Specified"
+    ),
+    
+    # Data sharing frequency
+    data_sharing_frequency = case_when(
+      sharefreq_1 == 1 & sharefreq_2 == 1 ~ "On Request & Routinely",
+      sharefreq_1 == 1 ~ "On Request",
+      sharefreq_2 == 1 ~ "Routinely",
+      TRUE ~ "Not Specified"
+    ),
+    
+    # Data sharing methods
+    data_sharing_methods = case_when(
+      hadrive == 1 & intesys == 1 & via == 1 & whatsapp == 1 & text == 1 & online == 1 ~ "All Methods",
+      hadrive == 1 & intesys == 1 & via == 1 ~ "Hard Drive, Integrated Systems, Email",
+      intesys == 1 & via == 1 ~ "Integrated Systems, Email",
+      hadrive == 1 ~ "Hard Drive",
+      intesys == 1 ~ "Integrated Systems",
+      via == 1 ~ "Email",
+      whatsapp == 1 ~ "WhatsApp",
+      text == 1 ~ "Text",
+      online == 1 ~ "Online Drive",
+      other_shared_meth == 1 ~ "Other Methods",
+      TRUE ~ "Not Specified"
+    )
+  ) %>%
+  # Select only the formatted columns for the table
+  select(
+    site,
+    routine_quality_checks,
+    quality_check_frequency,
+    quality_review_process,
+    quality_issue_resolution,
+    mnch_review_frequency,
+    quality_check_methods,
+    staff_trained_quality,
+    data_refresh_frequency,
+    data_sharing_status,
+    data_sharing_recipients,
+    data_sharing_frequency,
+    data_sharing_methods
+  )
+
+# Create a formatted table using kableExtra
+quality_sharing_table <- quality_sharing_data %>%
+  rename(
+    "Site" = site,
+    "Routine Quality Checks" = routine_quality_checks,
+    "Quality Check Frequency" = quality_check_frequency,
+    "Quality Review Process" = quality_review_process,
+    "Quality Issue Resolution" = quality_issue_resolution,
+    "MNCH Review Frequency" = mnch_review_frequency,
+    "Quality Check Methods" = quality_check_methods,
+    "Staff Trained on Quality" = staff_trained_quality,
+    "Data Refresh Frequency" = data_refresh_frequency,
+    "Data Sharing Status" = data_sharing_status,
+    "Data Sharing Recipients" = data_sharing_recipients,
+    "Data Sharing Frequency" = data_sharing_frequency,
+    "Data Sharing Methods" = data_sharing_methods
+  ) %>%
+  knitr::kable(
+    format = "html",
+    caption = "Table 4: Data Quality and Sharing Practices",
+    align = c("l", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c")
+  ) %>%
+  kableExtra::kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = TRUE,
+    position = "center",
+    font_size = 10
+  ) %>%
+  kableExtra::row_spec(0, bold = TRUE, color = "white", background = "#2E8B57") %>%
+  kableExtra::column_spec(1, bold = TRUE, width = "8em") %>%
+  kableExtra::column_spec(2:13, width = "7em") %>%
+  kableExtra::scroll_box(width = "100%", height = "500px") %>%
+  kableExtra::footnote(
+    general = "Source: Landscape Analysis of Maternal Immunization Safety Surveillance Systems",
+    general_title = "Note: "
+  )
+
+# Display the table
+quality_sharing_table
+```
+
+
